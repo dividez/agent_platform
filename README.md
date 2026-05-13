@@ -807,9 +807,7 @@ type ModelCapabilities = {
 interface DatabaseProvider {
   dialect: string;
 
-  transaction<T>(
-    fn: (tx: Transaction) => Promise<T>
-  ): Promise<T>;
+  transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T>;
 }
 ```
 
@@ -990,3 +988,100 @@ AI Chat
 而是：
 
 ## Agent Operating System for Browser Workspace
+
+---
+
+## 十一、基础设施 Provider 化扩展
+
+本仓库现在把关键基础设施配置抽象为可切换 Provider，业务层只依赖统一接口，不直接绑定具体实现。
+
+### 1. 数据库多版本切换
+
+数据库通过 `DATABASE_PROVIDER` 与 `DATABASE_URL` 切换，当前类型层支持：
+
+- `postgres`
+- `mysql`
+- `sqlite`
+
+默认使用 PostgreSQL：
+
+```bash
+DATABASE_PROVIDER=postgres
+DATABASE_URL=postgres://agent:agent@localhost:5432/agent_platform
+DATABASE_MIGRATIONS_DIR=migrations/sql/postgres
+```
+
+切换到 MySQL：
+
+```bash
+DATABASE_PROVIDER=mysql
+DATABASE_URL=mysql://agent:agent@localhost:3306/agent_platform
+DATABASE_MIGRATIONS_DIR=migrations/sql/mysql
+docker compose --profile mysql up
+```
+
+数据库运行时配置与迁移配置由 `@agent-platform/db` 暴露，API 的 `/infra/providers` 会返回当前激活配置。
+
+### 2. 数据库版本迁移
+
+迁移文件按数据库方言隔离：
+
+```text
+migrations/sql/postgres/*.sql
+migrations/sql/mysql/*.sql
+```
+
+可用以下命令检查迁移文件与 SHA-256 校验值：
+
+```bash
+pnpm migrations:check
+DATABASE_PROVIDER=mysql pnpm migrations:check
+```
+
+`DATABASE_MIGRATIONS_RUN_ON_STARTUP` 默认关闭，避免服务启动时自动改库；生产环境建议由 CI/CD 或专门的 migration job 执行。
+
+### 3. 二级子路径入口
+
+Web 与 API 都支持部署到二级子路径：
+
+```bash
+PUBLIC_BASE_PATH=/agent-platform
+# 或分别配置
+NEXT_PUBLIC_WEB_BASE_PATH=/agent-platform
+API_BASE_PATH=/agent-platform
+```
+
+Next.js 会设置 `basePath` / `assetPrefix`，API 会同时挂载根路径与配置后的子路径，便于灰度迁移。
+
+### 4. 多版本向量库
+
+向量库通过 `VECTOR_STORE_PROVIDER` 切换，当前类型层支持：
+
+- `pgvector`
+- `qdrant`
+- `milvus`
+- `chroma`
+- `pinecone`
+- `weaviate`
+
+本地 Qdrant 可通过 profile 启动：
+
+```bash
+docker compose --profile vector up qdrant
+```
+
+### 5. 多版本对象存储
+
+对象存储通过 `OBJECT_STORAGE_PROVIDER` 切换，当前类型层支持：
+
+- `minio`
+- `s3`
+- `gcs`
+- `azure-blob`
+- `filesystem`
+
+本地 MinIO 可通过 profile 启动：
+
+```bash
+docker compose --profile object-storage up minio
+```

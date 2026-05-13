@@ -1,0 +1,26 @@
+CREATE TABLE IF NOT EXISTS agent_platform_migrations (
+  id VARCHAR(255) PRIMARY KEY,
+  checksum VARCHAR(128) NOT NULL,
+  applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS runtime_runs (
+  id CHAR(36) PRIMARY KEY,
+  tenant_id VARCHAR(255) NOT NULL,
+  agent_code VARCHAR(255) NOT NULL,
+  status VARCHAR(64) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS runtime_events (
+  id CHAR(36) PRIMARY KEY,
+  run_id CHAR(36) NOT NULL,
+  type VARCHAR(128) NOT NULL,
+  payload JSON NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT runtime_events_run_id_fk FOREIGN KEY (run_id) REFERENCES runtime_runs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX runtime_events_run_id_created_at_idx
+  ON runtime_events (run_id, created_at);

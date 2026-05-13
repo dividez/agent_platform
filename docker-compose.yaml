@@ -4,6 +4,9 @@ services:
       context: .
       dockerfile: docker/web/Dockerfile
     env_file: .env.example
+    environment:
+      NEXT_PUBLIC_WEB_BASE_PATH: ${NEXT_PUBLIC_WEB_BASE_PATH:-}
+      PUBLIC_BASE_PATH: ${PUBLIC_BASE_PATH:-}
     ports:
       - "${WEB_PORT:-3000}:3000"
     depends_on:
@@ -14,6 +17,15 @@ services:
       context: .
       dockerfile: docker/api/Dockerfile
     env_file: .env.example
+    environment:
+      API_BASE_PATH: ${API_BASE_PATH:-}
+      PUBLIC_BASE_PATH: ${PUBLIC_BASE_PATH:-}
+      DATABASE_PROVIDER: ${DATABASE_PROVIDER:-postgres}
+      DATABASE_URL: ${DATABASE_URL:-postgres://agent:agent@postgres:5432/agent_platform}
+      VECTOR_STORE_PROVIDER: ${VECTOR_STORE_PROVIDER:-pgvector}
+      VECTOR_STORE_ENDPOINT: ${VECTOR_STORE_ENDPOINT:-http://qdrant:6333}
+      OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER:-minio}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-http://minio:9000}
     ports:
       - "${API_PORT:-8787}:8787"
     depends_on:
@@ -28,18 +40,53 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agent}
       POSTGRES_DB: ${POSTGRES_DB:-agent_platform}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+
+  mysql:
+    image: "${MYSQL_IMAGE:-mysql:8.4}"
+    profiles: ["mysql"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-agent-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-agent_platform}
+      MYSQL_USER: ${MYSQL_USER:-agent}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-agent}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
 
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
+
+  qdrant:
+    image: "${QDRANT_IMAGE:-qdrant/qdrant:latest}"
+    profiles: ["vector"]
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+  minio:
+    image: "${MINIO_IMAGE:-minio/minio:latest}"
+    profiles: ["object-storage"]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-agent}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-agent-password}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
 
   temporal:
     image: temporalio/auto-setup:1.25
@@ -51,7 +98,7 @@ services:
       POSTGRES_SEEDS: postgres
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
     ports:
-      - "7233:7233"
+      - "${TEMPORAL_PORT:-7233}:7233"
     depends_on:
       - postgres
     volumes:
@@ -59,4 +106,7 @@ services:
 
 volumes:
   postgres-data:
+  mysql-data:
   redis-data:
+  qdrant-data:
+  minio-data:

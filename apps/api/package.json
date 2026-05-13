@@ -13,7 +13,10 @@
   "dependencies": {
     "@agent-platform/protocol": "workspace:*",
     "@hono/node-server": "^1.13.8",
-    "hono": "^4.6.16"
+    "hono": "^4.6.16",
+    "@agent-platform/db": "workspace:*",
+    "@agent-platform/memory": "workspace:*",
+    "@agent-platform/storage": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

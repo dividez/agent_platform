@@ -10,7 +10,8 @@
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "migrations:check": "node scripts/check-migrations.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
