@@ -1,0 +1,10 @@
+code: contract-review
+name: Contract Review Agent
+runtime: openai-agents
+model: gpt-4.1
+tools:
+  - compare_review_diff
+hitl:
+  schema: hitl.schema.json
+result:
+  renderer: json-render

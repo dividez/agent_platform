@@ -216,3 +216,23 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node / Turborepo
+node_modules/
+.pnpm-store/
+.next/
+.turbo/
+coverage/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment examples
+.env.*
+!.env.example
+
+# System/editor
+.DS_Store
+.idea/
+.vscode/

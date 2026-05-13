@@ -1,0 +1,8 @@
+code: compare-review
+name: Compare Review Agent
+runtime: openai-agents
+model: gpt-4.1
+tools:
+  - compare_review_diff
+result:
+  renderer: diff

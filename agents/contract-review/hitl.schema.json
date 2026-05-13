@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Contract Review Approval",
+  "type": "object",
+  "properties": {
+    "approved": {
+      "type": "boolean",
+      "title": "是否应用修订"
+    },
+    "comment": {
+      "type": "string",
+      "title": "审批意见"
+    }
+  },
+  "required": ["approved"]
+}
