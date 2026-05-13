@@ -1,5 +1,12 @@
 # Browser-based Agent Operating Platform 架构方案（最终版）
 
+
+## 路线图
+
+项目分阶段路线图已整理到 [`docs/roadmap.md`](docs/roadmap.md)。
+
+---
+
 ## 一、项目定位
 
 目标不是：
