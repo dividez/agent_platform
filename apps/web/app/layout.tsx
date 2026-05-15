@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata = {
   title: "Agent Platform",
-  description: "Browser-based Agent Operating Platform"
+  description: "Browser-based Agent Operating Platform",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -15,9 +15,7 @@ const basePath = normalizeBasePath(
 const nextConfig: NextConfig = {
   basePath,
   assetPrefix: basePath,
-  experimental: {
-    typedRoutes: true,
-  },
+  typedRoutes: true,
 };
 
 export default nextConfig;

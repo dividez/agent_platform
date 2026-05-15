@@ -16,7 +16,8 @@
     "hono": "^4.6.16",
     "@agent-platform/db": "workspace:*",
     "@agent-platform/memory": "workspace:*",
-    "@agent-platform/storage": "workspace:*"
+    "@agent-platform/storage": "workspace:*",
+    "@agent-platform/runtime": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

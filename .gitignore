@@ -223,6 +223,7 @@ node_modules/
 .next/
 .turbo/
 coverage/
+*.tsbuildinfo
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
@@ -236,3 +237,12 @@ yarn-error.log*
 .DS_Store
 .idea/
 .vscode/
+.omx/
+.codex/*
+!.codex/agents/
+!.codex/agents/**
+!.codex/skills/
+!.codex/skills/**
+.codex/skills/.system/**
+!.codex/prompts/
+!.codex/prompts/**

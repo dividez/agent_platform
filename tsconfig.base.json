@@ -1,11 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "resolveJsonModule": true,
@@ -17,10 +13,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@agent-platform/*": [
-        "packages/*/src"
-      ]
-    },
-    "ignoreDeprecations": "6.0"
+      "@agent-platform/*": ["packages/*/src"]
+    }
   }
 }

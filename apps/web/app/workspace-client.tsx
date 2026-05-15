@@ -1,0 +1,628 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import type { Artifact } from "@agent-platform/artifact";
+import {
+  createDefaultRendererRegistry,
+  type RenderedArtifact,
+} from "@agent-platform/renderer";
+import {
+  runtimeEventTypes,
+  type RuntimeEvent,
+  type RunStatus,
+} from "@agent-platform/protocol";
+
+interface RunRecord {
+  id: string;
+  agentCode: string;
+  prompt: string;
+  status: RunStatus;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+interface RunSnapshot {
+  run?: RunRecord;
+  events: RuntimeEvent[];
+  artifacts: Artifact[];
+  hitlRequests: HitlRequest[];
+}
+
+interface HitlRequest {
+  id: string;
+  runId: string;
+  title: string;
+  schema: JsonSchemaLike;
+  status: "created" | "pending" | "approved" | "rejected" | "expired" | "cancelled";
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+  response?: unknown;
+}
+
+interface JsonSchemaLike {
+  title?: string;
+  properties?: Record<string, { title?: string; type?: string }>;
+  required?: string[];
+}
+
+const apiBaseUrl =
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/g, "") ??
+  "http://localhost:8787";
+const rendererRegistry = createDefaultRendererRegistry();
+
+export function WorkspaceClient() {
+  const [agentCode, setAgentCode] = useState("contract-review");
+  const [prompt, setPrompt] = useState(
+    "请审查这份合同，找出付款、违约和自动续约风险。",
+  );
+  const [activeRunId, setActiveRunId] = useState<string | undefined>();
+  const [snapshot, setSnapshot] = useState<RunSnapshot>({
+    events: [],
+    artifacts: [],
+    hitlRequests: [],
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRespondingToHitl, setIsRespondingToHitl] = useState(false);
+  const [hitlComment, setHitlComment] = useState("");
+  const [error, setError] = useState<string | undefined>();
+
+  const canSubmit = prompt.trim().length > 0 && !isSubmitting;
+  const isTerminal =
+    snapshot.run?.status === "finished" ||
+    snapshot.run?.status === "failed" ||
+    snapshot.run?.status === "cancelled";
+  const pendingHitlRequest = snapshot.hitlRequests.find(
+    (request) => request.status === "pending",
+  );
+
+  useEffect(() => {
+    if (!activeRunId) {
+      return;
+    }
+
+    const runId = activeRunId;
+    let cancelled = false;
+    let eventSource: EventSource | undefined;
+    let fallbackTimeout: ReturnType<typeof setTimeout> | undefined;
+
+    async function refreshSnapshot(): Promise<RunSnapshot | undefined> {
+      try {
+        const next = await fetchRunSnapshot(runId);
+
+        if (cancelled) {
+          return undefined;
+        }
+
+        setSnapshot(next);
+        setError(undefined);
+        return next;
+      } catch (fetchError) {
+        if (!cancelled) {
+          setError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : "无法刷新 run 状态。",
+          );
+        }
+        return undefined;
+      }
+    }
+
+    function scheduleFallbackRefresh(delayMs = 1200) {
+      fallbackTimeout = setTimeout(async () => {
+        const next = await refreshSnapshot();
+
+        if (!cancelled && !isTerminalSnapshot(next)) {
+          scheduleFallbackRefresh();
+        }
+      }, delayMs);
+    }
+
+    function handleRuntimeEvent(message: MessageEvent<string>) {
+      try {
+        const event = JSON.parse(message.data) as RuntimeEvent;
+
+        setSnapshot((current) => ({
+          ...current,
+          run: updateRunFromEvent(current.run, event),
+          events: appendRuntimeEvent(current.events, event),
+        }));
+        setError(undefined);
+
+        if (event.type === "artifact_created" || event.type === "hitl_required") {
+          void refreshSnapshot();
+        }
+
+        if (event.type === "run_finished" || event.type === "run_failed") {
+          eventSource?.close();
+          void refreshSnapshot();
+        }
+      } catch {
+        if (!cancelled) {
+          setError("事件流数据解析失败，正在尝试刷新 run 快照。");
+          void refreshSnapshot();
+        }
+      }
+    }
+
+    void refreshSnapshot();
+
+    eventSource = new EventSource(
+      `${apiBaseUrl}/runtime/runs/${runId}/events/stream`,
+    );
+
+    for (const eventType of runtimeEventTypes) {
+      eventSource.addEventListener(eventType, handleRuntimeEvent);
+    }
+
+    eventSource.onerror = () => {
+      eventSource?.close();
+
+      if (!cancelled) {
+        setError("事件流连接中断，已切换为快照刷新。");
+        scheduleFallbackRefresh(250);
+      }
+    };
+
+    return () => {
+      cancelled = true;
+      eventSource?.close();
+
+      if (fallbackTimeout) {
+        clearTimeout(fallbackTimeout);
+      }
+    };
+  }, [activeRunId]);
+
+  const eventCounts = useMemo(() => {
+    return snapshot.events.reduce<Record<string, number>>((counts, event) => {
+      counts[event.type] = (counts[event.type] ?? 0) + 1;
+      return counts;
+    }, {});
+  }, [snapshot.events]);
+
+  async function startRun() {
+    if (!canSubmit) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(undefined);
+    setSnapshot({ events: [], artifacts: [], hitlRequests: [] });
+    setHitlComment("");
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/runtime/runs`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          agentCode,
+          prompt,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(body.error ?? `创建 run 失败：${response.status}`);
+      }
+
+      const body = (await response.json()) as {
+        runId: string;
+        run?: RunRecord;
+      };
+      setActiveRunId(body.runId);
+      setSnapshot({
+        run: body.run,
+        events: [],
+        artifacts: [],
+        hitlRequests: [],
+      });
+    } catch (startError) {
+      setError(
+        startError instanceof Error ? startError.message : "创建 run 失败。",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function respondToHitl(approved: boolean) {
+    if (!activeRunId || !pendingHitlRequest || isRespondingToHitl) {
+      return;
+    }
+
+    setIsRespondingToHitl(true);
+    setError(undefined);
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/runtime/runs/${activeRunId}/hitl/${pendingHitlRequest.id}/respond`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            approved,
+            comment: hitlComment.trim() || undefined,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(body.error ?? `提交审批失败：${response.status}`);
+      }
+
+      const next = await fetchRunSnapshot(activeRunId);
+      setSnapshot(next);
+      setHitlComment("");
+    } catch (respondError) {
+      setError(
+        respondError instanceof Error ? respondError.message : "提交审批失败。",
+      );
+    } finally {
+      setIsRespondingToHitl(false);
+    }
+  }
+
+  return (
+    <section className="workspace-grid" aria-label="Agent run workspace">
+      <form
+        className="panel run-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void startRun();
+        }}
+      >
+        <div>
+          <p className="eyebrow">Phase 1 Vertical Slice</p>
+          <h2>创建 Agent Run</h2>
+          <p className="muted">
+            这里使用 MockAgentRuntime 跑通事件驱动闭环：创建 run、记录事件、生成
+            artifact，并由前端订阅 Runtime Event Stream 实时展示。
+          </p>
+        </div>
+
+        <label>
+          Agent
+          <select
+            value={agentCode}
+            onChange={(event) => setAgentCode(event.target.value)}
+          >
+            <option value="contract-review">contract-review</option>
+            <option value="compare-review">compare-review</option>
+            <option value="mock-agent">mock-agent</option>
+          </select>
+        </label>
+
+        <label>
+          Prompt
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            rows={6}
+          />
+        </label>
+
+        <button type="submit" disabled={!canSubmit}>
+          {isSubmitting ? "创建中..." : "启动 Run"}
+        </button>
+
+        {error ? <p className="error">{error}</p> : null}
+      </form>
+
+      <section className="panel run-summary">
+        <div className="summary-header">
+          <div>
+            <p className="eyebrow">Run Status</p>
+            <h2>{snapshot.run?.id ?? "尚未创建 run"}</h2>
+          </div>
+          <span className={`status status-${snapshot.run?.status ?? "idle"}`}>
+            {snapshot.run?.status ?? "idle"}
+          </span>
+        </div>
+
+        <dl className="metrics">
+          <div>
+            <dt>Events</dt>
+            <dd>{snapshot.events.length}</dd>
+          </div>
+          <div>
+            <dt>Artifacts</dt>
+            <dd>{snapshot.artifacts.length}</dd>
+          </div>
+          <div>
+            <dt>Terminal</dt>
+            <dd>{isTerminal ? "yes" : "no"}</dd>
+          </div>
+        </dl>
+
+        <div className="event-counts">
+          {Object.entries(eventCounts).map(([type, count]) => (
+            <span key={type}>
+              {type}: {count}
+            </span>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel hitl-panel">
+        <p className="eyebrow">HITL Runtime</p>
+        <h2>人工审批</h2>
+        {pendingHitlRequest ? (
+          <div className="hitl-card">
+            <div>
+              <h3>{pendingHitlRequest.title}</h3>
+              <p className="muted">
+                Runtime 已暂停，等待人工决定后才会继续或结束。
+              </p>
+            </div>
+            <SchemaSummary schema={pendingHitlRequest.schema} />
+            <label>
+              审批意见
+              <textarea
+                value={hitlComment}
+                onChange={(event) => setHitlComment(event.target.value)}
+                rows={3}
+                placeholder="可选：说明通过或拒绝原因"
+              />
+            </label>
+            <div className="hitl-actions">
+              <button
+                type="button"
+                onClick={() => void respondToHitl(true)}
+                disabled={isRespondingToHitl}
+              >
+                {isRespondingToHitl ? "提交中..." : "批准并继续"}
+              </button>
+              <button
+                className="secondary-danger"
+                type="button"
+                onClick={() => void respondToHitl(false)}
+                disabled={isRespondingToHitl}
+              >
+                拒绝并结束
+              </button>
+            </div>
+          </div>
+        ) : snapshot.hitlRequests.length > 0 ? (
+          <div className="hitl-history">
+            {snapshot.hitlRequests.map((request) => (
+              <p key={request.id}>
+                {request.title}：<strong>{request.status}</strong>
+              </p>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">
+            contract-review 生成风险列表后会触发一次审批暂停。
+          </p>
+        )}
+      </section>
+
+      <section className="panel timeline-panel">
+        <p className="eyebrow">Run Timeline</p>
+        <h2>事件流</h2>
+        {snapshot.events.length === 0 ? (
+          <p className="muted">启动 run 后，这里会显示 RuntimeEvent。</p>
+        ) : (
+          <ol className="timeline">
+            {snapshot.events.map((event) => (
+              <li key={event.id}>
+                <div className="event-meta">
+                  <strong>{event.type}</strong>
+                  <time dateTime={event.createdAt}>
+                    {new Date(event.createdAt).toLocaleTimeString()}
+                  </time>
+                </div>
+                <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+      <section className="panel artifact-panel">
+        <p className="eyebrow">Artifact Panel</p>
+        <h2>产物</h2>
+        {snapshot.artifacts.length === 0 ? (
+          <p className="muted">
+            Mock runtime 完成后会生成一个 risk_list artifact。
+          </p>
+        ) : (
+          <div className="artifacts">
+            {snapshot.artifacts.map((artifact) => (
+              <article key={artifact.id} className="artifact-card">
+                <div className="artifact-title">
+                  <h3>{artifact.title}</h3>
+                  <span>{artifact.renderer}</span>
+                </div>
+                <p className="muted">
+                  {artifact.type} · v{artifact.version} · {artifact.status}
+                </p>
+                <ArtifactBody artifact={artifact} />
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function SchemaSummary({ schema }: { schema: JsonSchemaLike }) {
+  const fields = Object.entries(schema.properties ?? {});
+
+  if (fields.length === 0) {
+    return null;
+  }
+
+  return (
+    <dl className="schema-summary">
+      {fields.map(([name, field]) => (
+        <div key={name}>
+          <dt>{field.title ?? name}</dt>
+          <dd>
+            {name} · {field.type ?? "unknown"}
+            {schema.required?.includes(name) ? " · required" : ""}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function ArtifactBody({ artifact }: { artifact: Artifact }) {
+  return <RenderedArtifactBody artifact={rendererRegistry.render(artifact)} />;
+}
+
+function RenderedArtifactBody({ artifact }: { artifact: RenderedArtifact }) {
+  switch (artifact.kind) {
+    case "risk_list":
+      return (
+        <div className="artifact-body">
+          {artifact.markdown ? (
+            <p className="artifact-markdown">{artifact.markdown}</p>
+          ) : null}
+          {artifact.risks.length === 0 ? (
+            <p className="muted">未发现结构化风险项。</p>
+          ) : (
+            <ul className="risk-list">
+              {artifact.risks.map((risk, index) => (
+                <li key={`${risk.level}-${risk.title}-${index}`}>
+                  <span className={`risk-level risk-${risk.level}`}>
+                    {risk.level}
+                  </span>
+                  <strong>{risk.title}</strong>
+                  {risk.description ? <p>{risk.description}</p> : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      );
+    case "markdown":
+      return <p className="artifact-markdown">{artifact.markdown}</p>;
+    case "diff":
+      return <pre>{artifact.diff}</pre>;
+    case "approval":
+      return (
+        <div className="artifact-body">
+          <pre>{JSON.stringify(artifact.decision, null, 2)}</pre>
+          {artifact.comment ? <p>{artifact.comment}</p> : null}
+        </div>
+      );
+    case "workflow_trace":
+      return <pre>{JSON.stringify(artifact.steps, null, 2)}</pre>;
+    case "json":
+      return <pre>{JSON.stringify(artifact.value, null, 2)}</pre>;
+  }
+}
+
+async function fetchRunSnapshot(runId: string): Promise<RunSnapshot> {
+  const [runResponse, eventsResponse, artifactsResponse, hitlResponse] =
+    await Promise.all([
+      fetch(`${apiBaseUrl}/runtime/runs/${runId}`, { cache: "no-store" }),
+      fetch(`${apiBaseUrl}/runtime/runs/${runId}/events`, {
+        cache: "no-store",
+      }),
+      fetch(`${apiBaseUrl}/runtime/runs/${runId}/artifacts`, {
+        cache: "no-store",
+      }),
+      fetch(`${apiBaseUrl}/runtime/runs/${runId}/hitl`, { cache: "no-store" }),
+    ]);
+
+  if (!runResponse.ok) {
+    throw new Error(`读取 run 失败：${runResponse.status}`);
+  }
+
+  const runBody = (await runResponse.json()) as { run: RunRecord };
+  const eventsBody = eventsResponse.ok
+    ? ((await eventsResponse.json()) as { events: RuntimeEvent[] })
+    : { events: [] };
+  const artifactsBody = artifactsResponse.ok
+    ? ((await artifactsResponse.json()) as { artifacts: Artifact[] })
+    : { artifacts: [] };
+  const hitlBody = hitlResponse.ok
+    ? ((await hitlResponse.json()) as { requests: HitlRequest[] })
+    : { requests: [] };
+
+  return {
+    run: runBody.run,
+    events: eventsBody.events,
+    artifacts: artifactsBody.artifacts,
+    hitlRequests: hitlBody.requests,
+  };
+}
+
+function appendRuntimeEvent(
+  events: RuntimeEvent[],
+  event: RuntimeEvent,
+): RuntimeEvent[] {
+  if (events.some((existingEvent) => existingEvent.id === event.id)) {
+    return events;
+  }
+
+  return [...events, event];
+}
+
+function updateRunFromEvent(
+  run: RunRecord | undefined,
+  event: RuntimeEvent,
+): RunRecord | undefined {
+  if (!run) {
+    return run;
+  }
+
+  const status = getStatusFromEvent(event);
+
+  if (!status) {
+    return run;
+  }
+
+  return {
+    ...run,
+    status,
+    updatedAt: event.createdAt,
+    startedAt: event.type === "run_started" ? event.createdAt : run.startedAt,
+    finishedAt:
+      event.type === "run_finished" || event.type === "run_failed"
+        ? event.createdAt
+        : run.finishedAt,
+    error: event.type === "run_failed" ? event.payload.error : run.error,
+  };
+}
+
+function getStatusFromEvent(event: RuntimeEvent): RunStatus | undefined {
+  switch (event.type) {
+    case "run_started":
+      return "running";
+    case "hitl_required":
+      return "waiting_for_hitl";
+    case "run_finished":
+      return "finished";
+    case "run_failed":
+      return "failed";
+    default:
+      return undefined;
+  }
+}
+
+function isTerminalSnapshot(snapshot: RunSnapshot | undefined): boolean {
+  return (
+    snapshot?.run?.status === "finished" ||
+    snapshot?.run?.status === "failed" ||
+    snapshot?.run?.status === "cancelled"
+  );
+}

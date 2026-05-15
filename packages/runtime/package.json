@@ -14,6 +14,8 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@agent-platform/protocol": "workspace:*"
+    "@agent-platform/protocol": "workspace:*",
+    "@agent-platform/artifact": "workspace:*",
+    "@agent-platform/hitl-runtime": "workspace:*"
   }
 }

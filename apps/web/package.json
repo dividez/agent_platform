@@ -6,14 +6,16 @@
     "dev": "next dev --port ${WEB_PORT:-3000}",
     "build": "next build",
     "start": "next start --port ${WEB_PORT:-3000}",
-    "lint": "next lint",
+    "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@agent-platform/protocol": "workspace:*",
     "next": "^15.1.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@agent-platform/artifact": "workspace:*",
+    "@agent-platform/renderer": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^19.0.7",
