@@ -36,7 +36,13 @@ interface HitlRequest {
   runId: string;
   title: string;
   schema: JsonSchemaLike;
-  status: "created" | "pending" | "approved" | "rejected" | "expired" | "cancelled";
+  status:
+    | "created"
+    | "pending"
+    | "approved"
+    | "rejected"
+    | "expired"
+    | "cancelled";
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string;
@@ -133,7 +139,10 @@ export function WorkspaceClient() {
         }));
         setError(undefined);
 
-        if (event.type === "artifact_created" || event.type === "hitl_required") {
+        if (
+          event.type === "artifact_created" ||
+          event.type === "hitl_required"
+        ) {
           void refreshSnapshot();
         }
 
@@ -184,6 +193,8 @@ export function WorkspaceClient() {
       return counts;
     }, {});
   }, [snapshot.events]);
+  const latestArtifact = snapshot.artifacts[snapshot.artifacts.length - 1];
+  const runPhase = getRunPhase(snapshot.run?.status, pendingHitlRequest);
 
   async function startRun() {
     if (!canSubmit) {
@@ -278,59 +289,91 @@ export function WorkspaceClient() {
 
   return (
     <section className="workspace-grid" aria-label="Agent run workspace">
-      <form
-        className="panel run-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void startRun();
-        }}
-      >
-        <div>
-          <p className="eyebrow">Phase 1 Vertical Slice</p>
-          <h2>创建 Agent Run</h2>
-          <p className="muted">
-            这里使用 MockAgentRuntime 跑通事件驱动闭环：创建 run、记录事件、生成
-            artifact，并由前端订阅 Runtime Event Stream 实时展示。
-          </p>
+      <section className="panel prompt-console">
+        <div className="console-header">
+          <div>
+            <p className="eyebrow">New Intent</p>
+            <h2>今天要收集什么 Prompt？</h2>
+          </div>
+          <span className="console-pill">{runPhase}</span>
         </div>
 
-        <label>
-          Agent
-          <select
-            value={agentCode}
-            onChange={(event) => setAgentCode(event.target.value)}
-          >
-            <option value="contract-review">contract-review</option>
-            <option value="compare-review">compare-review</option>
-            <option value="mock-agent">mock-agent</option>
-          </select>
-        </label>
+        <form
+          className="run-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void startRun();
+          }}
+        >
+          <label>
+            场景模板
+            <select
+              value={agentCode}
+              onChange={(event) => setAgentCode(event.target.value)}
+            >
+              <option value="contract-review">合同风险审查</option>
+              <option value="compare-review">方案对比评审</option>
+              <option value="mock-agent">通用 Prompt 收集</option>
+            </select>
+          </label>
 
-        <label>
-          Prompt
-          <textarea
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            rows={6}
-          />
-        </label>
+          <label>
+            用户意图
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              rows={8}
+              placeholder="像发消息一样描述目标、上下文、约束和希望得到的输出。"
+            />
+          </label>
 
-        <button type="submit" disabled={!canSubmit}>
-          {isSubmitting ? "创建中..." : "启动 Run"}
-        </button>
+          <div className="composer-actions">
+            <button type="submit" disabled={!canSubmit}>
+              {isSubmitting ? "发送中..." : "发送意图"}
+            </button>
+            <p className="muted">
+              Runtime 会持续推送进度，并在完成后把结果沉淀为产物。
+            </p>
+          </div>
 
-        {error ? <p className="error">{error}</p> : null}
-      </form>
+          {error ? <p className="error">{error}</p> : null}
+        </form>
 
-      <section className="panel run-summary">
+        <div className="intent-tips" aria-label="Prompt suggestions">
+          <span>目标</span>
+          <span>上下文</span>
+          <span>约束</span>
+          <span>输出格式</span>
+        </div>
+      </section>
+
+      <section className="panel conversation-panel">
         <div className="summary-header">
           <div>
-            <p className="eyebrow">Run Status</p>
-            <h2>{snapshot.run?.id ?? "尚未创建 run"}</h2>
+            <p className="eyebrow">Live Conversation</p>
+            <h2>{snapshot.run?.id ? "正在持续渲染" : "等待发送意图"}</h2>
           </div>
           <span className={`status status-${snapshot.run?.status ?? "idle"}`}>
             {snapshot.run?.status ?? "idle"}
           </span>
+        </div>
+
+        <ConversationFeed
+          prompt={prompt}
+          run={snapshot.run}
+          events={snapshot.events}
+          artifacts={snapshot.artifacts}
+          pendingHitlRequest={pendingHitlRequest}
+        />
+      </section>
+
+      <section className="panel run-summary compact-panel">
+        <div className="summary-header">
+          <div>
+            <p className="eyebrow">Run Snapshot</p>
+            <h2>执行概览</h2>
+          </div>
+          <span className="console-pill">{isTerminal ? "完成" : "进行中"}</span>
         </div>
 
         <dl className="metrics">
@@ -343,29 +386,33 @@ export function WorkspaceClient() {
             <dd>{snapshot.artifacts.length}</dd>
           </div>
           <div>
-            <dt>Terminal</dt>
-            <dd>{isTerminal ? "yes" : "no"}</dd>
+            <dt>HITL</dt>
+            <dd>{snapshot.hitlRequests.length}</dd>
           </div>
         </dl>
 
         <div className="event-counts">
-          {Object.entries(eventCounts).map(([type, count]) => (
-            <span key={type}>
-              {type}: {count}
-            </span>
-          ))}
+          {Object.entries(eventCounts).length === 0 ? (
+            <span>等待 runtime event</span>
+          ) : (
+            Object.entries(eventCounts).map(([type, count]) => (
+              <span key={type}>
+                {type}: {count}
+              </span>
+            ))
+          )}
         </div>
       </section>
 
-      <section className="panel hitl-panel">
-        <p className="eyebrow">HITL Runtime</p>
-        <h2>人工审批</h2>
+      <section className="panel hitl-panel compact-panel">
+        <p className="eyebrow">Human Checkpoint</p>
+        <h2>人工确认</h2>
         {pendingHitlRequest ? (
           <div className="hitl-card">
             <div>
               <h3>{pendingHitlRequest.title}</h3>
               <p className="muted">
-                Runtime 已暂停，等待人工决定后才会继续或结束。
+                Runtime 已暂停，确认后会继续生成最终结果。
               </p>
             </div>
             <SchemaSummary schema={pendingHitlRequest.schema} />
@@ -384,7 +431,7 @@ export function WorkspaceClient() {
                 onClick={() => void respondToHitl(true)}
                 disabled={isRespondingToHitl}
               >
-                {isRespondingToHitl ? "提交中..." : "批准并继续"}
+                {isRespondingToHitl ? "提交中..." : "批准继续"}
               </button>
               <button
                 className="secondary-danger"
@@ -392,7 +439,7 @@ export function WorkspaceClient() {
                 onClick={() => void respondToHitl(false)}
                 disabled={isRespondingToHitl}
               >
-                拒绝并结束
+                拒绝结束
               </button>
             </div>
           </div>
@@ -406,40 +453,30 @@ export function WorkspaceClient() {
           </div>
         ) : (
           <p className="muted">
-            contract-review 生成风险列表后会触发一次审批暂停。
+            需要确认时，这里会像聊天里的关键问题一样出现。
           </p>
         )}
       </section>
 
-      <section className="panel timeline-panel">
-        <p className="eyebrow">Run Timeline</p>
-        <h2>事件流</h2>
-        {snapshot.events.length === 0 ? (
-          <p className="muted">启动 run 后，这里会显示 RuntimeEvent。</p>
-        ) : (
-          <ol className="timeline">
-            {snapshot.events.map((event) => (
-              <li key={event.id}>
-                <div className="event-meta">
-                  <strong>{event.type}</strong>
-                  <time dateTime={event.createdAt}>
-                    {new Date(event.createdAt).toLocaleTimeString()}
-                  </time>
-                </div>
-                <pre>{JSON.stringify(event.payload, null, 2)}</pre>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
-
-      <section className="panel artifact-panel">
-        <p className="eyebrow">Artifact Panel</p>
-        <h2>产物</h2>
+      <section className="panel artifact-panel result-panel">
+        <div className="summary-header">
+          <div>
+            <p className="eyebrow">Final Result</p>
+            <h2>
+              {latestArtifact ? latestArtifact.title : "结果将在这里展示"}
+            </h2>
+          </div>
+          {latestArtifact ? (
+            <span className="console-pill">{latestArtifact.status}</span>
+          ) : null}
+        </div>
         {snapshot.artifacts.length === 0 ? (
-          <p className="muted">
-            Mock runtime 完成后会生成一个 risk_list artifact。
-          </p>
+          <div className="empty-result">
+            <strong>还没有产物</strong>
+            <p className="muted">
+              发送意图后，系统会把最终答案、风险列表或审批结果展示在这里。
+            </p>
+          </div>
         ) : (
           <div className="artifacts">
             {snapshot.artifacts.map((artifact) => (
@@ -459,6 +496,168 @@ export function WorkspaceClient() {
       </section>
     </section>
   );
+}
+
+function ConversationFeed({
+  prompt,
+  run,
+  events,
+  artifacts,
+  pendingHitlRequest,
+}: {
+  prompt: string;
+  run?: RunRecord;
+  events: RuntimeEvent[];
+  artifacts: Artifact[];
+  pendingHitlRequest?: HitlRequest;
+}) {
+  const latestArtifact = artifacts[artifacts.length - 1];
+  const latestEvent = events[events.length - 1];
+
+  return (
+    <div className="chat-feed" aria-live="polite">
+      <article className="chat-message user-message">
+        <span className="avatar">你</span>
+        <div className="bubble">
+          <strong>用户意图</strong>
+          <p>{prompt.trim() || "先描述一个想收集、执行或沉淀的 Prompt。"}</p>
+        </div>
+      </article>
+
+      <article className="chat-message agent-message">
+        <span className="avatar">AI</span>
+        <div className="bubble">
+          <strong>{run ? "已接收，开始执行" : "准备收集意图"}</strong>
+          <p>
+            {run
+              ? `Run ${run.id} 当前状态为 ${run.status}。`
+              : "发送后，我会把事件进度、人工确认和最终结果持续渲染在这个对话里。"}
+          </p>
+        </div>
+      </article>
+
+      {events.map((event) => (
+        <article
+          key={event.id}
+          className="chat-message agent-message subtle-message"
+        >
+          <span className="avatar">↻</span>
+          <div className="bubble">
+            <div className="event-meta">
+              <strong>{formatEventTitle(event.type)}</strong>
+              <time dateTime={event.createdAt}>
+                {new Date(event.createdAt).toLocaleTimeString()}
+              </time>
+            </div>
+            <p>{summarizeEvent(event)}</p>
+          </div>
+        </article>
+      ))}
+
+      {pendingHitlRequest ? (
+        <article className="chat-message agent-message checkpoint-message">
+          <span className="avatar">?</span>
+          <div className="bubble">
+            <strong>{pendingHitlRequest.title}</strong>
+            <p>这里需要人工确认，确认后我会继续生成最终结果。</p>
+          </div>
+        </article>
+      ) : null}
+
+      {latestArtifact ? (
+        <article className="chat-message agent-message result-message">
+          <span className="avatar">✓</span>
+          <div className="bubble">
+            <strong>最终结果已生成</strong>
+            <p>
+              {latestArtifact.title} · {latestArtifact.type} ·{" "}
+              {latestArtifact.status}
+            </p>
+          </div>
+        </article>
+      ) : latestEvent ? null : (
+        <article className="chat-message agent-message subtle-message">
+          <span className="avatar">…</span>
+          <div className="bubble">
+            <strong>等待发送</strong>
+            <p>这会是一个从意图到结果的连续工作流，而不是分散的技术面板。</p>
+          </div>
+        </article>
+      )}
+    </div>
+  );
+}
+
+function getRunPhase(
+  status: RunStatus | undefined,
+  pendingHitlRequest?: HitlRequest,
+): string {
+  if (pendingHitlRequest) {
+    return "等待确认";
+  }
+
+  switch (status) {
+    case "queued":
+      return "排队中";
+    case "running":
+      return "执行中";
+    case "waiting_for_hitl":
+      return "等待确认";
+    case "finished":
+      return "已完成";
+    case "failed":
+      return "执行失败";
+    case "cancelled":
+      return "已取消";
+    default:
+      return "可发送";
+  }
+}
+
+function formatEventTitle(eventType: RuntimeEvent["type"]): string {
+  switch (eventType) {
+    case "run_started":
+      return "开始执行";
+    case "message_delta":
+      return "内容更新";
+    case "tool_call_started":
+      return "工具启动";
+    case "tool_call_finished":
+      return "工具完成";
+    case "artifact_created":
+      return "生成产物";
+    case "hitl_required":
+      return "需要确认";
+    case "run_finished":
+      return "执行完成";
+    case "run_failed":
+      return "执行失败";
+    default:
+      return eventType;
+  }
+}
+
+function summarizeEvent(event: RuntimeEvent): string {
+  switch (event.type) {
+    case "run_started":
+      return "Runtime 已经接收用户意图，正在组织任务上下文。";
+    case "message_delta":
+      return event.payload.content;
+    case "tool_call_started":
+      return `正在调用 ${event.payload.toolName}，补齐执行所需信息。`;
+    case "tool_call_finished":
+      return `${event.payload.toolName} 已完成，用时 ${event.payload.durationMs}ms。`;
+    case "artifact_created":
+      return "系统已经沉淀出一个可展示、可查询的结果产物。";
+    case "hitl_required":
+      return "执行暂停并等待人工确认，这是结果生成前的关键检查点。";
+    case "run_finished":
+      return "执行闭环完成，可以查看下方最终结果。";
+    case "run_failed":
+      return event.payload.error ?? "执行过程中出现错误。";
+    default:
+      return "收到一条 Runtime 事件，工作流仍在继续。";
+  }
 }
 
 function SchemaSummary({ schema }: { schema: JsonSchemaLike }) {
