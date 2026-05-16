@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Artifact } from "@agent-platform/artifact";
 import {
   createDefaultRendererRegistry,
@@ -11,6 +11,11 @@ import {
   type RuntimeEvent,
   type RunStatus,
 } from "@agent-platform/protocol";
+import {
+  agentUiStack,
+  countAgUiEvents,
+  runtimeEventToUiRender,
+} from "./agent-ui-runtime";
 
 interface RunRecord {
   id: string;
@@ -62,9 +67,7 @@ const rendererRegistry = createDefaultRendererRegistry();
 
 export function WorkspaceClient() {
   const [agentCode, setAgentCode] = useState("contract-review");
-  const [prompt, setPrompt] = useState(
-    "请审查这份合同，找出付款、违约和自动续约风险。",
-  );
+  const [prompt, setPrompt] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | undefined>();
   const [snapshot, setSnapshot] = useState<RunSnapshot>({
     events: [],
@@ -75,8 +78,9 @@ export function WorkspaceClient() {
   const [isRespondingToHitl, setIsRespondingToHitl] = useState(false);
   const [hitlComment, setHitlComment] = useState("");
   const [error, setError] = useState<string | undefined>();
+  const launchPromptRef = useRef<HTMLTextAreaElement>(null);
 
-  const canSubmit = prompt.trim().length > 0 && !isSubmitting;
+  const canSubmit = !isSubmitting;
   const isTerminal =
     snapshot.run?.status === "finished" ||
     snapshot.run?.status === "failed" ||
@@ -195,9 +199,25 @@ export function WorkspaceClient() {
   }, [snapshot.events]);
   const latestArtifact = snapshot.artifacts[snapshot.artifacts.length - 1];
   const runPhase = getRunPhase(snapshot.run?.status, pendingHitlRequest);
+  const hasStarted = Boolean(activeRunId);
+  const agUiEventCount = useMemo(
+    () => countAgUiEvents(snapshot.events),
+    [snapshot.events],
+  );
+
+  function updatePrompt(value: string) {
+    setPrompt(value);
+  }
 
   async function startRun() {
-    if (!canSubmit) {
+    const submittedPrompt = (
+      prompt ||
+      launchPromptRef.current?.value ||
+      ""
+    ).trim();
+
+    if (!submittedPrompt || !canSubmit) {
+      setError("先输入你想让 Agent 完成的任务。");
       return;
     }
 
@@ -205,6 +225,7 @@ export function WorkspaceClient() {
     setError(undefined);
     setSnapshot({ events: [], artifacts: [], hitlRequests: [] });
     setHitlComment("");
+    setPrompt(submittedPrompt);
 
     try {
       const response = await fetch(`${apiBaseUrl}/runtime/runs`, {
@@ -214,7 +235,7 @@ export function WorkspaceClient() {
         },
         body: JSON.stringify({
           agentCode,
-          prompt,
+          prompt: submittedPrompt,
         }),
       });
 
@@ -287,13 +308,51 @@ export function WorkspaceClient() {
     }
   }
 
+  if (!hasStarted) {
+    return (
+      <section className="launch-screen" aria-label="Start an Agent run">
+        <form
+          className="launch-composer"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void startRun();
+          }}
+        >
+          <label className="sr-only" htmlFor="launch-prompt">
+            输入你想让 Agent 完成的任务
+          </label>
+          <textarea
+            id="launch-prompt"
+            ref={launchPromptRef}
+            className="launch-input"
+            value={prompt}
+            onChange={(event) => updatePrompt(event.currentTarget.value)}
+            onInput={(event) => updatePrompt(event.currentTarget.value)}
+            rows={3}
+            placeholder="告诉 Agent 你想完成什么..."
+            autoFocus
+          />
+          <button
+            className="launch-submit"
+            type="submit"
+            disabled={!canSubmit}
+            aria-label="开始执行"
+          >
+            {isSubmitting ? "..." : "开始"}
+          </button>
+        </form>
+        {error ? <p className="error launch-error">{error}</p> : null}
+      </section>
+    );
+  }
+
   return (
     <section className="workspace-grid" aria-label="Agent run workspace">
       <section className="panel prompt-console">
         <div className="console-header">
           <div>
-            <p className="eyebrow">New Intent</p>
-            <h2>今天要收集什么 Prompt？</h2>
+            <p className="eyebrow">Start</p>
+            <h2>启动一次 Agent Run</h2>
           </div>
           <span className="console-pill">{runPhase}</span>
         </div>
@@ -321,7 +380,8 @@ export function WorkspaceClient() {
             用户意图
             <textarea
               value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
+              onChange={(event) => updatePrompt(event.currentTarget.value)}
+              onInput={(event) => updatePrompt(event.currentTarget.value)}
               rows={8}
               placeholder="像发消息一样描述目标、上下文、约束和希望得到的输出。"
             />
@@ -329,10 +389,10 @@ export function WorkspaceClient() {
 
           <div className="composer-actions">
             <button type="submit" disabled={!canSubmit}>
-              {isSubmitting ? "发送中..." : "发送意图"}
+              {isSubmitting ? "发送中..." : "开始执行"}
             </button>
             <p className="muted">
-              Runtime 会持续推送进度，并在完成后把结果沉淀为产物。
+              用自然语言描述目标，Runtime 会把过程、确认点和结果串起来。
             </p>
           </div>
 
@@ -350,8 +410,8 @@ export function WorkspaceClient() {
       <section className="panel conversation-panel">
         <div className="summary-header">
           <div>
-            <p className="eyebrow">Live Conversation</p>
-            <h2>{snapshot.run?.id ? "正在持续渲染" : "等待发送意图"}</h2>
+            <p className="eyebrow">Run Stream</p>
+            <h2>{snapshot.run?.id ? "运行中的对话" : "等待任务"}</h2>
           </div>
           <span className={`status status-${snapshot.run?.status ?? "idle"}`}>
             {snapshot.run?.status ?? "idle"}
@@ -365,135 +425,154 @@ export function WorkspaceClient() {
           artifacts={snapshot.artifacts}
           pendingHitlRequest={pendingHitlRequest}
         />
-      </section>
 
-      <section className="panel run-summary compact-panel">
-        <div className="summary-header">
-          <div>
-            <p className="eyebrow">Run Snapshot</p>
-            <h2>执行概览</h2>
+        <div className="result-dock" aria-label="Run result">
+          <div className="summary-header">
+            <div>
+              <p className="eyebrow">Result</p>
+              <h2>
+                {latestArtifact ? latestArtifact.title : "结果将在这里出现"}
+              </h2>
+            </div>
+            {latestArtifact ? (
+              <span className="console-pill">{latestArtifact.status}</span>
+            ) : null}
           </div>
-          <span className="console-pill">{isTerminal ? "完成" : "进行中"}</span>
-        </div>
-
-        <dl className="metrics">
-          <div>
-            <dt>Events</dt>
-            <dd>{snapshot.events.length}</dd>
-          </div>
-          <div>
-            <dt>Artifacts</dt>
-            <dd>{snapshot.artifacts.length}</dd>
-          </div>
-          <div>
-            <dt>HITL</dt>
-            <dd>{snapshot.hitlRequests.length}</dd>
-          </div>
-        </dl>
-
-        <div className="event-counts">
-          {Object.entries(eventCounts).length === 0 ? (
-            <span>等待 runtime event</span>
+          {snapshot.artifacts.length === 0 ? (
+            <div className="empty-result">
+              <strong>还没有产物</strong>
+              <p className="muted">
+                任务完成后，风险列表、审批记录或最终摘要会沉淀在这里。
+              </p>
+            </div>
           ) : (
-            Object.entries(eventCounts).map(([type, count]) => (
-              <span key={type}>
-                {type}: {count}
-              </span>
-            ))
+            <div className="artifacts">
+              {snapshot.artifacts.map((artifact) => (
+                <article key={artifact.id} className="artifact-card">
+                  <div className="artifact-title">
+                    <h3>{artifact.title}</h3>
+                    <span>{artifact.renderer}</span>
+                  </div>
+                  <p className="muted">
+                    {artifact.type} · v{artifact.version} · {artifact.status}
+                  </p>
+                  <ArtifactBody artifact={artifact} />
+                </article>
+              ))}
+            </div>
           )}
         </div>
       </section>
 
-      <section className="panel hitl-panel compact-panel">
-        <p className="eyebrow">Human Checkpoint</p>
-        <h2>人工确认</h2>
-        {pendingHitlRequest ? (
-          <div className="hitl-card">
+      <aside className="ops-rail" aria-label="Run operations">
+        <section className="panel run-summary compact-panel">
+          <div className="summary-header">
             <div>
-              <h3>{pendingHitlRequest.title}</h3>
-              <p className="muted">
-                Runtime 已暂停，确认后会继续生成最终结果。
-              </p>
+              <p className="eyebrow">Snapshot</p>
+              <h2>运行概览</h2>
             </div>
-            <SchemaSummary schema={pendingHitlRequest.schema} />
-            <label>
-              审批意见
-              <textarea
-                value={hitlComment}
-                onChange={(event) => setHitlComment(event.target.value)}
-                rows={3}
-                placeholder="可选：说明通过或拒绝原因"
-              />
-            </label>
-            <div className="hitl-actions">
-              <button
-                type="button"
-                onClick={() => void respondToHitl(true)}
-                disabled={isRespondingToHitl}
-              >
-                {isRespondingToHitl ? "提交中..." : "批准继续"}
-              </button>
-              <button
-                className="secondary-danger"
-                type="button"
-                onClick={() => void respondToHitl(false)}
-                disabled={isRespondingToHitl}
-              >
-                拒绝结束
-              </button>
-            </div>
+            <span className="console-pill">{isTerminal ? "完成" : "进行中"}</span>
           </div>
-        ) : snapshot.hitlRequests.length > 0 ? (
-          <div className="hitl-history">
-            {snapshot.hitlRequests.map((request) => (
-              <p key={request.id}>
-                {request.title}：<strong>{request.status}</strong>
-              </p>
-            ))}
-          </div>
-        ) : (
-          <p className="muted">
-            需要确认时，这里会像聊天里的关键问题一样出现。
-          </p>
-        )}
-      </section>
 
-      <section className="panel artifact-panel result-panel">
-        <div className="summary-header">
-          <div>
-            <p className="eyebrow">Final Result</p>
-            <h2>
-              {latestArtifact ? latestArtifact.title : "结果将在这里展示"}
-            </h2>
+          <dl className="metrics">
+            <div>
+              <dt>Events</dt>
+              <dd>{snapshot.events.length}</dd>
+            </div>
+            <div>
+              <dt>Artifacts</dt>
+              <dd>{snapshot.artifacts.length}</dd>
+            </div>
+            <div>
+              <dt>HITL</dt>
+              <dd>{snapshot.hitlRequests.length}</dd>
+            </div>
+            <div>
+              <dt>AG-UI</dt>
+              <dd>{agUiEventCount}</dd>
+            </div>
+          </dl>
+
+          <div className="event-counts">
+            {Object.entries(eventCounts).length === 0 ? (
+              <span>等待 runtime event</span>
+            ) : (
+              Object.entries(eventCounts).map(([type, count]) => (
+                <span key={type}>
+                  {type}: {count}
+                </span>
+              ))
+            )}
           </div>
-          {latestArtifact ? (
-            <span className="console-pill">{latestArtifact.status}</span>
-          ) : null}
-        </div>
-        {snapshot.artifacts.length === 0 ? (
-          <div className="empty-result">
-            <strong>还没有产物</strong>
-            <p className="muted">
-              发送意图后，系统会把最终答案、风险列表或审批结果展示在这里。
-            </p>
-          </div>
-        ) : (
-          <div className="artifacts">
-            {snapshot.artifacts.map((artifact) => (
-              <article key={artifact.id} className="artifact-card">
-                <div className="artifact-title">
-                  <h3>{artifact.title}</h3>
-                  <span>{artifact.renderer}</span>
-                </div>
-                <p className="muted">
-                  {artifact.type} · v{artifact.version} · {artifact.status}
-                </p>
-                <ArtifactBody artifact={artifact} />
-              </article>
+        </section>
+
+        <section className="panel runtime-stack compact-panel">
+          <p className="eyebrow">UI Runtime</p>
+          <h2>SDK 适配层</h2>
+          <div className="stack-list">
+            {agentUiStack.map((item) => (
+              <div key={item.id}>
+                <strong>{item.label}</strong>
+                <p>{item.role}</p>
+              </div>
             ))}
           </div>
-        )}
-      </section>
+        </section>
+
+        <section className="panel hitl-panel compact-panel">
+          <p className="eyebrow">Checkpoint</p>
+          <h2>人工确认</h2>
+          {pendingHitlRequest ? (
+            <div className="hitl-card">
+              <div>
+                <h3>{pendingHitlRequest.title}</h3>
+                <p className="muted">
+                  Runtime 已暂停，确认后会继续生成最终结果。
+                </p>
+              </div>
+              <SchemaSummary schema={pendingHitlRequest.schema} />
+              <label>
+                审批意见
+                <textarea
+                  value={hitlComment}
+                  onChange={(event) => setHitlComment(event.target.value)}
+                  rows={3}
+                  placeholder="可选：说明通过或拒绝原因"
+                />
+              </label>
+              <div className="hitl-actions">
+                <button
+                  type="button"
+                  onClick={() => void respondToHitl(true)}
+                  disabled={isRespondingToHitl}
+                >
+                  {isRespondingToHitl ? "提交中..." : "批准继续"}
+                </button>
+                <button
+                  className="secondary-danger"
+                  type="button"
+                  onClick={() => void respondToHitl(false)}
+                  disabled={isRespondingToHitl}
+                >
+                  拒绝结束
+                </button>
+              </div>
+            </div>
+          ) : snapshot.hitlRequests.length > 0 ? (
+            <div className="hitl-history">
+              {snapshot.hitlRequests.map((request) => (
+                <p key={request.id}>
+                  {request.title}：<strong>{request.status}</strong>
+                </p>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">
+              需要确认时，这里会像一个关键决策点一样出现。
+            </p>
+          )}
+        </section>
+      </aside>
     </section>
   );
 }
@@ -550,6 +629,7 @@ function ConversationFeed({
               </time>
             </div>
             <p>{summarizeEvent(event)}</p>
+            <UiRenderPreview event={event} />
           </div>
         </article>
       ))}
@@ -584,6 +664,21 @@ function ConversationFeed({
           </div>
         </article>
       )}
+    </div>
+  );
+}
+
+function UiRenderPreview({ event }: { event: RuntimeEvent }) {
+  const envelope = runtimeEventToUiRender(event);
+
+  if (!envelope) {
+    return null;
+  }
+
+  return (
+    <div className="ui-render-preview">
+      <span>{envelope.event}</span>
+      <code>{envelope.renderer}</code>
     </div>
   );
 }
