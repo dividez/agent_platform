@@ -29,6 +29,9 @@ importers:
       '@agent-platform/memory':
         specifier: workspace:*
         version: link:../../packages/memory
+      '@agent-platform/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@agent-platform/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -114,6 +117,12 @@ importers:
         version: 5.9.3
 
   packages/memory:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/observability:
     devDependencies:
       typescript:
         specifier: ^5.7.3

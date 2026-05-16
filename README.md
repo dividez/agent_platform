@@ -5,6 +5,8 @@
 
 项目分阶段路线图已整理到 [`docs/roadmap.md`](docs/roadmap.md)。
 
+可观测性配置（日志、指标、追踪）见 [`docs/observability.md`](docs/observability.md)。
+
 ---
 
 ## 一、项目定位

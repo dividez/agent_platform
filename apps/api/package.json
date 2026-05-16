@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@agent-platform/protocol": "workspace:*",
+    "@agent-platform/observability": "workspace:*",
     "@hono/node-server": "^1.13.8",
     "hono": "^4.6.16",
     "@agent-platform/db": "workspace:*",
